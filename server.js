@@ -4,12 +4,12 @@ const connectDB = require('./config/db');
 const chatRoutes = require('./routes/chat');
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: 'https://caastle.netlify.app/' })); // Replace with your Netlify URL
 app.use(express.json());
 app.use('/api', chatRoutes);
 
-const PORT = process.env.PORT || 5000;
+const port = process.env.PORT || 3000; // Vercel assigns a port
 
 connectDB().then(() => {
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  app.listen(port, () => console.log(`Server running on port ${port}`));
 });
