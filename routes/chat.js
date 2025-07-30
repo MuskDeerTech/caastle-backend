@@ -7,19 +7,24 @@ const cheerio = require('cheerio');
 
 router.post('/save-log', async (req, res) => {
   const { name, email, phone, log } = req.body;
+  console.log('Received save-log request:', { name, email, phone, log });
   try {
     let user = await User.findOne({ email });
     if (!user) {
       user = new User({ name, email, phone, chatHistory: log, lastUpdated: new Date() });
+      console.log('Created new user:', user.email);
     } else {
       user.name = name;
       user.phone = phone;
       user.chatHistory = log;
       user.lastUpdated = new Date();
+      console.log('Updated user:', user.email);
     }
     await user.save();
+    console.log('User saved successfully');
     res.status(200).json({ message: 'Log saved', lastUpdated: user.lastUpdated });
   } catch (err) {
+    console.error('Save error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

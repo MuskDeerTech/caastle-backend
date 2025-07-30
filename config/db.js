@@ -3,13 +3,15 @@ require('dotenv').config();
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || "mongodb+srv://muskdeer:nJWHN4xtdAKALCwc@cluster0.mg0yr.mongodb.net/chatbot?retryWrites=true&w=majority" || 'mongodb://localhost:27017/chatbot', {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/chatbot', {
       useNewUrlParser: true,
       useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000, // 5-second timeout
+      heartbeatFrequencyMS: 10000,    // Check connection every 10 seconds
     });
     console.log('MongoDB connected');
   } catch (err) {
-    console.error('MongoDB connection error:', err);
+    console.error('MongoDB connection error:', err.message);
     process.exit(1);
   }
 };
