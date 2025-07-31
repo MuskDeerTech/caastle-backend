@@ -111,7 +111,10 @@ router.post('/fetch-website', async (req, res) => {
         console.error(`Error crawling ${url}:`, err.message);
       }
     };
-
+    await crawlPage(baseUrl + '/about/company');
+    await crawlPage(baseUrl + '/products/food');
+    await crawlPage(baseUrl + '/products/pharma');
+    await crawlPage(baseUrl + '/products/all-products');
     await crawlPage(baseUrl + '/products');
     await crawlPage(baseUrl + '/technology/our-ranges-tds'); // Add for PCM variants
     console.log('Crawled content map:', contentMap);
