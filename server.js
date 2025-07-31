@@ -4,15 +4,22 @@ const connectDB = require('./config/db');
 const chatRoutes = require('./routes/chat');
 
 const app = express();
-const allowedOrigins = ['http://localhost:5173', 'https://caastle.netlify.app'];
+
+// Define allowed origins
+const allowedOrigins = [
+  'http://localhost:5173', // Local development
+  'https://caastle.netlify.app' // Live frontend
+];
+
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
-  }
+  },
+  credentials: true // Include if using cookies or auth headers
 }));
 app.use(express.json());
 app.use('/api', chatRoutes);
