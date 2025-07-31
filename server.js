@@ -5,10 +5,9 @@ const chatRoutes = require('./routes/chat');
 
 const app = express();
 
-// Define allowed origins
 const allowedOrigins = [
-  'http://localhost:5173', // Local development
-  'https://caastle.netlify.app' // Live frontend
+  'http://localhost:5173',
+  'https://caastle.netlify.app'
 ];
 
 app.use(cors({
@@ -19,7 +18,7 @@ app.use(cors({
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true // Include if using cookies or auth headers
+  credentials: true
 }));
 app.use(express.json());
 app.use('/api', chatRoutes);
