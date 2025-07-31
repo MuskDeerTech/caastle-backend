@@ -87,32 +87,30 @@ router.post('/fetch-website', async (req, res) => {
     const visitedUrls = new Set();
     const contentMap = {};
 
-    const crawlPage = async (url) => {
-      if (visitedUrls.has(url)) return;
-      visitedUrls.add(url);
-      try {
-        const response = await axios.get(url);
-        const $ = cheerio.load(response.data);
-        console.log('Crawling:', url);
-        // Extract text content from the page
-        const pageContent = $('body').text().trim();
-        contentMap[url] = pageContent;
+  const crawlPage = async (url) => {
+  if (visitedUrls.has(url)) return;
+  visitedUrls.add(url);
+  try {
+    const response = await axios.get(url, { timeout: 5000 }); // Add timeout
+    const $ = cheerio.load(response.data);
+    console.log('Crawling:', url);
+    const pageContent = $('body').text().trim();
+    contentMap[url] = pageContent;
 
-        // Find all internal links to crawl
-        $('a[href]').each((i, elem) => {
-          let href = $(elem).attr('href');
-          if (href && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
-            if (href.startsWith('/')) href = baseUrl + href;
-            else if (!href.startsWith('http')) href = new URL(href, url).href;
-            if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
-              crawlPage(href).catch(err => console.error(`Failed to crawl ${href}:`, err.message));
-            }
-          }
-        });
-      } catch (err) {
-        console.error(`Error crawling ${url}:`, err.message);
+    $('a[href]').each((i, elem) => {
+      let href = $(elem).attr('href');
+      if (href && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
+        if (href.startsWith('/')) href = baseUrl + href;
+        else if (!href.startsWith('http')) href = new URL(href, url).href;
+        if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
+          crawlPage(href).catch(err => console.error(`Failed to crawl ${href}:`, err.message));
+        }
       }
-    };
+    });
+  } catch (err) {
+    console.error(`Error crawling ${url}:`, err.message);
+  }
+};
 
     await crawlPage(baseUrl);
     console.log('Crawled content map:', contentMap);
