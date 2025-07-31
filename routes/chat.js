@@ -82,7 +82,7 @@ router.post('/fetch-website', async (req, res) => {
   const { query } = req.body;
   console.log('Fetching website data for query:', query);
   try {
-    const baseUrl = 'https://www.tan90thermal.com'; // Or .co.in if different
+    const baseUrl = 'https://www.tan90thermal.com'; // Handles .co.in redirect if needed
     const visitedUrls = new Set();
     const contentMap = {};
 
@@ -93,11 +93,14 @@ router.post('/fetch-website', async (req, res) => {
         const response = await axios.get(url);
         const $ = cheerio.load(response.data);
         console.log('Crawling:', url);
-        const pageContent = $('body').text().trim(); // Get full body text
-        contentMap[url] = pageContent;
+        // Extract more structured content: title, description, specs
+        const pageTitle = $('title').text() || 'No title';
+        const pageContent = $('body').text().trim(); // Full body
+        const specs = $('p, li').map((i, el) => $(el).text()).get().join('\n'); // Target paragraphs/lists for details
+        contentMap[url] = `Title: ${pageTitle}\nContent: ${pageContent}\nSpecs: ${specs.substring(0, 2000)}`; // Limit to avoid overflow
 
-        // Focus on product links
-        $('a[href^="/products/"]').each((i, elem) => {
+        // Follow product and technology links
+        $('a[href^="/products/"], a[href^="/technology/"]').each((i, elem) => {
           let href = $(elem).attr('href');
           if (href.startsWith('/')) href = baseUrl + href;
           if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
@@ -109,15 +112,17 @@ router.post('/fetch-website', async (req, res) => {
       }
     };
 
-    await crawlPage(baseUrl + '/products/all-products'); // Start from /products
+    await crawlPage(baseUrl + '/products');
+    await crawlPage(baseUrl + '/technology/our-ranges-tds'); // Add for PCM variants
     console.log('Crawled content map:', contentMap);
 
     let relevantContent = '';
-    for (const [url, content] of Object.entries(contentMap)) {
-      if (query ? content.toLowerCase().includes(query.toLowerCase()) : true) {
-        relevantContent += `${url}: ${content.substring(0, 1000)}...\n`; // Increase limit for details
-      }
-    }
+    const siteFuse = new Fuse(Object.entries(contentMap), { keys: [1], threshold: 0.4 }); // Fuzzy search on content
+    const matches = siteFuse.search(query);
+    matches.forEach(match => {
+      const [url, content] = match.item;
+      relevantContent += `${url}: ${content}\n`;
+    });
 
     if (!relevantContent) {
       return res.status(404).json({ error: 'No relevant content found' });
