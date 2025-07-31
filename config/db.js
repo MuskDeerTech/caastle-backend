@@ -4,10 +4,9 @@ require('dotenv').config();
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/chatbot', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000, // 5-second timeout
-      heartbeatFrequencyMS: 10000,    // Check connection every 10 seconds
+      useUnifiedTopology: true, // Modern default, no deprecation warning
+      serverSelectionTimeoutMS: 5000,
+      heartbeatFrequencyMS: 10000,
     });
     console.log('MongoDB connected');
   } catch (err) {
