@@ -82,49 +82,44 @@ router.post('/fetch-website', async (req, res) => {
   const { query } = req.body;
   console.log('Fetching website data for query:', query);
   try {
-    // Start with the homepage
-    const baseUrl = 'https://www.tan90thermal.com';
+    const baseUrl = 'https://www.tan90thermal.com'; // Or .co.in if different
     const visitedUrls = new Set();
     const contentMap = {};
 
-  const crawlPage = async (url) => {
-  if (visitedUrls.has(url)) return;
-  visitedUrls.add(url);
-  try {
-    const response = await axios.get(url, { timeout: 5000 }); // Add timeout
-    const $ = cheerio.load(response.data);
-    console.log('Crawling:', url);
-    const pageContent = $('body').text().trim();
-    contentMap[url] = pageContent;
+    const crawlPage = async (url) => {
+      if (visitedUrls.has(url)) return;
+      visitedUrls.add(url);
+      try {
+        const response = await axios.get(url);
+        const $ = cheerio.load(response.data);
+        console.log('Crawling:', url);
+        const pageContent = $('body').text().trim(); // Get full body text
+        contentMap[url] = pageContent;
 
-    $('a[href]').each((i, elem) => {
-      let href = $(elem).attr('href');
-      if (href && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
-        if (href.startsWith('/')) href = baseUrl + href;
-        else if (!href.startsWith('http')) href = new URL(href, url).href;
-        if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
-          crawlPage(href).catch(err => console.error(`Failed to crawl ${href}:`, err.message));
-        }
+        // Focus on product links
+        $('a[href^="/products/"]').each((i, elem) => {
+          let href = $(elem).attr('href');
+          if (href.startsWith('/')) href = baseUrl + href;
+          if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
+            crawlPage(href).catch(err => console.error(`Failed to crawl ${href}:`, err.message));
+          }
+        });
+      } catch (err) {
+        console.error(`Error crawling ${url}:`, err.message);
       }
-    });
-  } catch (err) {
-    console.error(`Error crawling ${url}:`, err.message);
-  }
-};
+    };
 
-    await crawlPage(baseUrl);
+    await crawlPage(baseUrl + '/products/all-products'); // Start from /products
     console.log('Crawled content map:', contentMap);
 
-    // Search for query in all crawled content
     let relevantContent = '';
     for (const [url, content] of Object.entries(contentMap)) {
       if (query ? content.toLowerCase().includes(query.toLowerCase()) : true) {
-        relevantContent += `${url}: ${content.substring(0, 200)}...\n`; // Limit to 200 chars for brevity
+        relevantContent += `${url}: ${content.substring(0, 1000)}...\n`; // Increase limit for details
       }
     }
 
     if (!relevantContent) {
-      console.warn('No relevant content found, falling back to static data');
       return res.status(404).json({ error: 'No relevant content found' });
     }
 
