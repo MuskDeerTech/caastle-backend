@@ -82,24 +82,25 @@ router.post('/fetch-website', async (req, res) => {
   const { query } = req.body;
   console.log('Fetching website data for query:', query);
   try {
-    const baseUrl = 'https://www.tan90thermal.com'; // Handles .co.in redirect if needed
+    const baseUrl = 'https://www.tan90thermal.com';
     const visitedUrls = new Set();
     const contentMap = {};
 
     const crawlPage = async (url) => {
-      if (visitedUrls.has(url)) return;
+      if (visitedUrls.has(url) || visitedUrls.size > 10) return; // Limit to 10 pages
       visitedUrls.add(url);
       try {
-        const response = await axios.get(url);
+        const response = await axios.get(url, {
+          timeout: 10000, // 10s timeout
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, // Mimic browser
+        });
         const $ = cheerio.load(response.data);
         console.log('Crawling:', url);
-        // Extract more structured content: title, description, specs
         const pageTitle = $('title').text() || 'No title';
-        const pageContent = $('body').text().trim(); // Full body
-        const specs = $('p, li').map((i, el) => $(el).text()).get().join('\n'); // Target paragraphs/lists for details
-        contentMap[url] = `Title: ${pageTitle}\nContent: ${pageContent}\nSpecs: ${specs.substring(0, 2000)}`; // Limit to avoid overflow
+        const pageContent = $('body').text().trim();
+        const specs = $('p, li').map((i, el) => $(el).text()).get().join('\n');
+        contentMap[url] = `Title: ${pageTitle}\nContent: ${pageContent}\nSpecs: ${specs.substring(0, 2000)}`;
 
-        // Follow product and technology links
         $('a[href^="/products/"], a[href^="/technology/"]').each((i, elem) => {
           let href = $(elem).attr('href');
           if (href.startsWith('/')) href = baseUrl + href;
@@ -108,19 +109,15 @@ router.post('/fetch-website', async (req, res) => {
           }
         });
       } catch (err) {
-        console.error(`Error crawling ${url}:`, err.message);
+        console.error(`Error crawling ${url}:`, err.message, err.code);
       }
     };
-    await crawlPage(baseUrl + '/about/company');
-    await crawlPage(baseUrl + '/products/food');
-    await crawlPage(baseUrl + '/products/pharma');
+
     await crawlPage(baseUrl + '/products/all-products');
-    await crawlPage(baseUrl + '/products');
-    await crawlPage(baseUrl + '/technology/our-ranges-tds'); // Add for PCM variants
     console.log('Crawled content map:', contentMap);
 
     let relevantContent = '';
-    const siteFuse = new Fuse(Object.entries(contentMap), { keys: [1], threshold: 0.4 }); // Fuzzy search on content
+    const siteFuse = new Fuse(Object.entries(contentMap), { keys: [1], threshold: 0.4 });
     const matches = siteFuse.search(query);
     matches.forEach(match => {
       const [url, content] = match.item;
@@ -133,8 +130,8 @@ router.post('/fetch-website', async (req, res) => {
 
     res.json({ content: relevantContent });
   } catch (err) {
-    console.error('Scraping error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch website data' });
+    console.error('Scraping error:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to fetch website data', details: err.message });
   }
 });
 
