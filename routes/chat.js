@@ -201,89 +201,68 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
   }
 });
 
-router.post('/fetch-context', async (req, res) => {
+router.post("/fetch-context", async (req, res) => {
   const { query } = req.body;
-  console.log('Fetching context for query:', query);
-  console.log("User Query:", query);
-console.log("Available documents:");
-console.log(Object.entries(contentMap).map(([url, content]) => `${url}: ${content.slice(0, 150)}`));
+
+  if (!query) {
+    return res.status(400).json({ error: "Query is required" });
+  }
 
   try {
-    const baseUrl = 'https://www.tan90thermal.com';
-    const visitedUrls = new Set();
+    const documents = await Document.find();
     const contentMap = {};
 
-    const crawlPage = async (url) => {
-      if (visitedUrls.has(url) || visitedUrls.size > 10) return;
-      visitedUrls.add(url);
-      try {
-        const response = await axios.get(url, {
-          timeout: 10000,
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        });
-        const $ = cheerio.load(response.data);
-        console.log('Crawling:', url);
-        const pageTitle = $('title').text() || 'No title';
-        const pageContent = $('body').text().trim();
-        const specs = $('p, li').map((i, el) => $(el).text()).get().join('\n');
-        contentMap[url] = `Title: ${pageTitle}\nContent: ${pageContent}\nSpecs: ${specs.substring(0, 2000)}`;
-        $('a[href^="/products/"], a[href^="/technology/"]').each((i, elem) => {
-          let href = $(elem).attr('href');
-          if (href.startsWith('/')) href = baseUrl + href;
-          if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
-            crawlPage(href).catch(err => console.error(`Failed to crawl ${href}:`, err.message));
-          }
-        });
-      } catch (err) {
-        console.error(`Error crawling ${url}:`, err.message, err.code);
+    // Parse all uploaded documents
+    documents.forEach((doc) => {
+      if (doc.content && typeof doc.content === "string") {
+        contentMap[doc.fileName] = doc.content;
       }
-    };
+    });
 
-    try {
-      await crawlPage(baseUrl + '/products/all-products');
-      console.log('Completed crawling, contentMap:', Object.keys(contentMap).length);
-    } catch (crawlErr) {
-      console.warn('Crawling failed, proceeding with documents:', crawlErr.message);
-    }
+    const allChunks = Object.entries(contentMap).map(([url, content]) => ({
+      url,
+      content: content.toLowerCase(),
+    }));
 
-    let documents;
-    try {
-      documents = await Document.find({});
-      console.log('Fetched documents count:', documents.length);
-      documents.forEach(doc => {
-        contentMap[`doc:${doc.title}`] = `Title: ${doc.title}\nContent: ${doc.content.substring(0, 2000)}`;
-      });
-    } catch (dbErr) {
-      console.error('Database error fetching documents:', dbErr.message);
-      documents = []; // Fallback to empty if DB fails
-    }
-
-    const Fuse = require('fuse.js');
-    const siteFuse = new Fuse(Object.entries(contentMap), {
-      keys: [{ name: '1', weight: 1 }], // Search the content (index 1)
-      threshold: 0.2, // Lowered threshold to increase match sensitivity
+    // Fuse.js configuration
+    const fuse = new Fuse(allChunks, {
+      keys: ["content"],
+      threshold: 0.5,
+      minMatchCharLength: 2,
       ignoreLocation: true,
-      findAllMatches: true,
       includeScore: true,
     });
-    const matches = siteFuse.search(query);
-    console.log('Fuse matches found:', matches.length);
 
-    let relevantContent = '';
-    matches.forEach(match => {
-      const [url, content] = match.item;
-      relevantContent += `${url}: ${content}\n`;
+    let results = fuse.search(query.toLowerCase());
+
+    // If no Fuse matches, fallback to keyword-level match
+    if (results.length === 0) {
+      const keywords = query.toLowerCase().split(/\s+/);
+      results = allChunks
+        .filter((chunk) =>
+          keywords.some((word) => chunk.content.includes(word))
+        )
+        .map((chunk) => ({
+          item: chunk,
+          score: 1, // fallback match
+        }));
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: "No relevant content found" });
+    }
+
+    // Prepare response: top 3 matches
+    const context = results.slice(0, 3).map((r) => {
+      return `${r.item.url}: ${r.item.content.substring(0, 500)}...`;
     });
 
-    if (!relevantContent) {
-      console.log('No relevant content found for query:', query);
-      return res.status(404).json({ error: 'No relevant content found' });
-    }
-    console.log('Returning relevant content:', relevantContent);
-    res.json({ content: relevantContent });
-  } catch (err) {
-    console.error('Context fetch error:', err.message, err.stack);
-    res.status(500).json({ error: 'Failed to fetch context', details: err.message });
+    const finalContext = context.join("\n\n");
+
+    return res.json({ context: finalContext });
+  } catch (error) {
+    console.error("Fetch context error:", error);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
