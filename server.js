@@ -21,12 +21,14 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-app.use('/api', chatRoutes); // Ensure this line is present
+app.use('/api', chatRoutes); // Ensure all API routes are mounted
 
 const port = process.env.PORT || 5000;
 
+// Connect to MongoDB
 connectDB().catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
+  process.exit(1); // Exit on critical failure
 });
 
 // For local testing

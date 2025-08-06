@@ -236,6 +236,7 @@ router.post('/fetch-context', async (req, res) => {
 
     try {
       await crawlPage(baseUrl + '/products/all-products');
+      console.log('Completed crawling, contentMap:', Object.keys(contentMap).length);
     } catch (crawlErr) {
       console.warn('Crawling failed, proceeding with documents:', crawlErr.message);
     }
@@ -243,6 +244,7 @@ router.post('/fetch-context', async (req, res) => {
     let documents;
     try {
       documents = await Document.find({});
+      console.log('Fetched documents count:', documents.length);
       documents.forEach(doc => {
         contentMap[`doc:${doc.title}`] = `Title: ${doc.title}\nContent: ${doc.content.substring(0, 2000)}`;
       });
@@ -260,6 +262,7 @@ router.post('/fetch-context', async (req, res) => {
       includeScore: true,
     });
     const matches = siteFuse.search(query);
+    console.log('Fuse matches found:', matches.length);
 
     let relevantContent = '';
     matches.forEach(match => {
@@ -268,8 +271,10 @@ router.post('/fetch-context', async (req, res) => {
     });
 
     if (!relevantContent) {
+      console.log('No relevant content found for query:', query);
       return res.status(404).json({ error: 'No relevant content found' });
     }
+    console.log('Returning relevant content:', relevantContent);
     res.json({ content: relevantContent });
   } catch (err) {
     console.error('Context fetch error:', err.message, err.stack);
