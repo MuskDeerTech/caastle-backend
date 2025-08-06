@@ -212,19 +212,19 @@ router.post("/fetch-context", async (req, res) => {
     const documents = await Document.find();
     const contentMap = {};
 
-    // Parse all uploaded documents
+    // ✅ Use correct key: doc.title instead of doc.fileName
     documents.forEach((doc) => {
       if (doc.content && typeof doc.content === "string") {
-        contentMap[doc.fileName] = doc.content;
+        contentMap[doc.title] = doc.content;
       }
     });
 
-    const allChunks = Object.entries(contentMap).map(([url, content]) => ({
-      url,
+    const allChunks = Object.entries(contentMap).map(([title, content]) => ({
+      fileName: title,
       content: content.toLowerCase(),
     }));
 
-    // Fuse.js configuration
+    // ✅ Fuse.js setup
     const fuse = new Fuse(allChunks, {
       keys: ["content"],
       threshold: 0.5,
@@ -235,7 +235,7 @@ router.post("/fetch-context", async (req, res) => {
 
     let results = fuse.search(query.toLowerCase());
 
-    // If no Fuse matches, fallback to keyword-level match
+    // 🔁 If no fuzzy matches, fallback to keyword match
     if (results.length === 0) {
       const keywords = query.toLowerCase().split(/\s+/);
       results = allChunks
@@ -244,7 +244,7 @@ router.post("/fetch-context", async (req, res) => {
         )
         .map((chunk) => ({
           item: chunk,
-          score: 1, // fallback match
+          score: 1,
         }));
     }
 
@@ -252,18 +252,20 @@ router.post("/fetch-context", async (req, res) => {
       return res.status(404).json({ error: "No relevant content found" });
     }
 
-    // Prepare response: top 3 matches
-    const context = results.slice(0, 3).map((r) => {
-      return `${r.item.url}: ${r.item.content.substring(0, 500)}...`;
+    // 🧠 Prepare top 3 matched context
+    const contextChunks = results.slice(0, 3).map((r) => {
+      const fileName = r.item.fileName || "Document";
+      const snippet = r.item.content.substring(0, 500).trim();
+      return `${fileName}: ${snippet}...`;
     });
 
-    const finalContext = context.join("\n\n");
-
+    const finalContext = contextChunks.join("\n\n");
     return res.json({ context: finalContext });
   } catch (error) {
     console.error("Fetch context error:", error);
     return res.status(500).json({ error: "Server error" });
   }
 });
+
 
 module.exports = router;
