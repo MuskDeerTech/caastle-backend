@@ -8,6 +8,10 @@
   ],
   "routes": [
     {
+      "src": "/api/upload",
+      "dest": "/server.js"
+    },
+    {
       "src": "/api/(.*)",
       "dest": "/server.js"
     }

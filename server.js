@@ -23,7 +23,7 @@ app.use(cors({
 app.use(express.json());
 app.use('/api', chatRoutes);
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 5000;
 
 connectDB().catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
