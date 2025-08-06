@@ -9,6 +9,7 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const fs = require('fs');
 const path = require('path');
+const Fuse = require('fuse.js');
 const Document = require('../models/Document');
 
 router.post('/save-log', async (req, res) => {
@@ -203,6 +204,10 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
 router.post('/fetch-context', async (req, res) => {
   const { query } = req.body;
   console.log('Fetching context for query:', query);
+  console.log("User Query:", query);
+console.log("Available documents:");
+console.log(Object.entries(contentMap).map(([url, content]) => `${url}: ${content.slice(0, 150)}`));
+
   try {
     const baseUrl = 'https://www.tan90thermal.com';
     const visitedUrls = new Set();
