@@ -141,10 +141,7 @@ router.post('/fetch-website', async (req, res) => {
   }
 });
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
-});
+const storage = multer.memoryStorage(); // Use memory storage instead of disk
 const upload = multer({ storage });
 
 router.post('/upload-document', upload.single('file'), async (req, res) => {
@@ -152,7 +149,7 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
   if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
   console.log('Received file:', file.originalname, file.mimetype);
-  const { originalname, path: filePath, mimetype } = file;
+  const { originalname, buffer, mimetype } = file; // Use buffer instead of filePath
   let content = '';
   let fileType = '';
 
@@ -160,14 +157,13 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
     const ext = originalname.split('.').pop().toLowerCase();
     if (mimetype === 'application/pdf' || ext === 'pdf') {
       fileType = 'pdf';
-      const dataBuffer = fs.readFileSync(filePath);
-      const pdfData = await pdfParse(dataBuffer);
+      const pdfData = await pdfParse(buffer); // Parse directly from buffer
       content = pdfData.text;
     } else if (['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword', 'application/octet-stream'].includes(mimetype) || ext === 'docx' || ext === 'doc') {
       fileType = 'docx';
-      console.log('Processing DOCX:', filePath);
+      console.log('Processing DOCX:', originalname);
       try {
-        const result = await mammoth.extractRawText({ path: filePath });
+        const result = await mammoth.extractRawText({ buffer }); // Use buffer for mammoth
         content = result.value || '';
         if (!content) throw new Error('Mammoth extracted no text');
       } catch (mammothErr) {
@@ -176,9 +172,8 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
       }
     } else if (mimetype === 'text/plain' || ext === 'txt') {
       fileType = 'txt';
-      content = fs.readFileSync(filePath, 'utf8');
+      content = buffer.toString('utf8'); // Convert buffer to string
     } else {
-      fs.unlinkSync(filePath);
       return res.status(400).json({ error: 'Unsupported file type. Use PDF, DOCX, or TXT.' });
     }
 
@@ -191,10 +186,8 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
     });
     await newDoc.save();
 
-    fs.unlinkSync(filePath);
     res.status(200).json({ message: 'Document uploaded and stored', title: originalname });
   } catch (err) {
-    fs.unlinkSync(filePath);
     console.error('Upload error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to process document: ${err.message}` });
   }
