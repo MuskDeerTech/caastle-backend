@@ -141,7 +141,10 @@ router.post('/fetch-website', async (req, res) => {
   }
 });
 
-const storage = multer.memoryStorage(); // Use memory storage instead of disk
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+});
 const upload = multer({ storage });
 
 router.post('/upload-document', upload.single('file'), async (req, res) => {
@@ -149,7 +152,7 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
   if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
   console.log('Received file:', file.originalname, file.mimetype);
-  const { originalname, buffer, mimetype } = file; // Use buffer instead of filePath
+  const { originalname, path: filePath, mimetype } = file;
   let content = '';
   let fileType = '';
 
@@ -157,13 +160,14 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
     const ext = originalname.split('.').pop().toLowerCase();
     if (mimetype === 'application/pdf' || ext === 'pdf') {
       fileType = 'pdf';
-      const pdfData = await pdfParse(buffer); // Parse directly from buffer
+      const dataBuffer = fs.readFileSync(filePath);
+      const pdfData = await pdfParse(dataBuffer);
       content = pdfData.text;
     } else if (['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword', 'application/octet-stream'].includes(mimetype) || ext === 'docx' || ext === 'doc') {
       fileType = 'docx';
-      console.log('Processing DOCX:', originalname);
+      console.log('Processing DOCX:', filePath);
       try {
-        const result = await mammoth.extractRawText({ buffer }); // Use buffer for mammoth
+        const result = await mammoth.extractRawText({ path: filePath });
         content = result.value || '';
         if (!content) throw new Error('Mammoth extracted no text');
       } catch (mammothErr) {
@@ -172,8 +176,9 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
       }
     } else if (mimetype === 'text/plain' || ext === 'txt') {
       fileType = 'txt';
-      content = buffer.toString('utf8'); // Convert buffer to string
+      content = fs.readFileSync(filePath, 'utf8');
     } else {
+      fs.unlinkSync(filePath);
       return res.status(400).json({ error: 'Unsupported file type. Use PDF, DOCX, or TXT.' });
     }
 
@@ -186,8 +191,10 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
     });
     await newDoc.save();
 
+    fs.unlinkSync(filePath);
     res.status(200).json({ message: 'Document uploaded and stored', title: originalname });
   } catch (err) {
+    fs.unlinkSync(filePath);
     console.error('Upload error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to process document: ${err.message}` });
   }
@@ -247,7 +254,10 @@ router.post('/fetch-context', async (req, res) => {
     const Fuse = require('fuse.js');
     const siteFuse = new Fuse(Object.entries(contentMap), {
       keys: [{ name: '1', weight: 1 }], // Search the content (index 1)
-      threshold: 0.4,
+      threshold: 0.2, // Lowered threshold to increase match sensitivity
+      ignoreLocation: true,
+      findAllMatches: true,
+      includeScore: true,
     });
     const matches = siteFuse.search(query);
 
