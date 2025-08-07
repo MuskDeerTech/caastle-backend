@@ -5,12 +5,11 @@ const transporter = require('../config/smtp');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const Document = require('../models/Document');
-const { generateEmbedding } = require('../utils/embedding'); // Embedding utils
+const { getEmbedding } = require('../utils/embedding'); // Import embedding utility
+const Fuse = require('fuse.js'); // Add Fuse import
 
 // Use memory storage for Vercel
 const storage = multer.memoryStorage();
@@ -151,7 +150,7 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
   if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
   console.log('Received file:', file.originalname, file.mimetype);
-  const { originalname, buffer, mimetype } = file; // Use buffer instead of filePath
+  const { originalname, buffer, mimetype } = file;
   let content = '';
   let fileType = '';
 
@@ -159,13 +158,13 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
     const ext = originalname.split('.').pop().toLowerCase();
     if (mimetype === 'application/pdf' || ext === 'pdf') {
       fileType = 'pdf';
-      const pdfData = await pdfParse(buffer); // Parse from buffer
+      const pdfData = await pdfParse(buffer);
       content = pdfData.text;
     } else if (['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword', 'application/octet-stream'].includes(mimetype) || ext === 'docx' || ext === 'doc') {
       fileType = 'docx';
       console.log('Processing DOCX:', originalname);
       try {
-        const result = await mammoth.extractRawText({ buffer }); // Use buffer for mammoth
+        const result = await mammoth.extractRawText({ buffer });
         content = result.value || '';
         if (!content) throw new Error('Mammoth extracted no text');
       } catch (mammothErr) {
@@ -174,17 +173,19 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
       }
     } else if (mimetype === 'text/plain' || ext === 'txt') {
       fileType = 'txt';
-      content = buffer.toString('utf8'); // Convert buffer to string
+      content = buffer.toString('utf8');
     } else {
       return res.status(400).json({ error: 'Unsupported file type. Use PDF, DOCX, or TXT.' });
     }
 
     if (!content) throw new Error('No content extracted from file');
 
+    const embedding = await getEmbedding(content); // Generate embedding
     const newDoc = new Document({
       title: originalname,
       content,
       fileType,
+      embedding, // Store embedding
     });
     await newDoc.save();
     console.log('Document saved to MongoDB:', newDoc.title);
@@ -201,12 +202,12 @@ router.post('/fetch-context', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'Query is required' });
 
   try {
-    const queryEmbedding = await generateEmbedding(query);
+    const queryEmbedding = await getEmbedding(query);
 
     const results = await Document.aggregate([
       {
         $vectorSearch: {
-          index: 'vector_index',
+          index: 'vector_index', // Ensure this index exists in MongoDB
           path: 'embedding',
           queryVector: queryEmbedding,
           numCandidates: 10,
@@ -221,13 +222,49 @@ router.post('/fetch-context', async (req, res) => {
       },
     ]);
 
-    if (!results.length) return res.status(404).json({ error: 'No relevant content found' });
+    if (!results.length) {
+      // Fallback to Fuse.js search if vector search fails
+      const documents = await Document.find();
+      const contentMap = {};
+      documents.forEach((doc) => {
+        if (doc.content && typeof doc.content === 'string') {
+          contentMap[doc.title] = doc.content;
+        }
+      });
+
+      const allChunks = Object.entries(contentMap).map(([title, content]) => ({
+        fileName: title,
+        content: content.toLowerCase(),
+      }));
+
+      const fuse = new Fuse(allChunks, {
+        keys: ['content'],
+        threshold: 0.5,
+        minMatchCharLength: 2,
+        ignoreLocation: true,
+        includeScore: true,
+      });
+
+      const fuseResults = fuse.search(query.toLowerCase());
+      if (fuseResults.length === 0) {
+        return res.status(404).json({ error: 'No relevant content found' });
+      }
+
+      const contextChunks = fuseResults.slice(0, 3).map((r) => {
+        const fileName = r.item.fileName || 'Document';
+        const snippet = r.item.content.substring(0, 500).trim();
+        return `${fileName}: ${snippet}...`;
+      });
+
+      const finalContext = contextChunks.join('\n\n');
+      return res.json({ context: finalContext });
+    }
 
     const context = results.map(doc => `${doc.title}: ${doc.snippet.trim()}...`).join('\n\n');
     res.json({ context });
   } catch (err) {
-    console.error('Vector search error:', err.message);
-    res.status(500).json({ error: 'Vector search failed' });
+    console.error('Fetch context error:', err.message);
+    res.status(500).json({ error: 'Fetch context failed' });
   }
 });
 
