@@ -5,9 +5,12 @@ const transporter = require('../config/smtp');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const Document = require('../models/Document');
+const { generateEmbedding } = require('../utils/embedding'); // Embedding utils
 
 // Use memory storage for Vercel
 const storage = multer.memoryStorage();
@@ -195,57 +198,36 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
 
 router.post('/fetch-context', async (req, res) => {
   const { query } = req.body;
-  if (!query) {
-    return res.status(400).json({ error: 'Query is required' });
-  }
+  if (!query) return res.status(400).json({ error: 'Query is required' });
+
   try {
-    const documents = await Document.find();
-    const contentMap = {};
-    documents.forEach((doc) => {
-      if (doc.content && typeof doc.content === 'string') {
-        contentMap[doc.title] = doc.content;
-      }
-    });
+    const queryEmbedding = await generateEmbedding(query);
 
-    const allChunks = Object.entries(contentMap).map(([title, content]) => ({
-      fileName: title,
-      content: content.toLowerCase(),
-    }));
+    const results = await Document.aggregate([
+      {
+        $vectorSearch: {
+          index: 'vector_index',
+          path: 'embedding',
+          queryVector: queryEmbedding,
+          numCandidates: 10,
+          limit: 3,
+        },
+      },
+      {
+        $project: {
+          title: 1,
+          snippet: { $substr: ['$content', 0, 500] },
+        },
+      },
+    ]);
 
-    const fuse = new Fuse(allChunks, {
-      keys: ['content'],
-      threshold: 0.5,
-      minMatchCharLength: 2,
-      ignoreLocation: true,
-      includeScore: true,
-    });
+    if (!results.length) return res.status(404).json({ error: 'No relevant content found' });
 
-    let results = fuse.search(query.toLowerCase());
-    if (results.length === 0) {
-      const keywords = query.toLowerCase().split(/\s+/);
-      results = allChunks
-        .filter((chunk) => keywords.some((word) => chunk.content.includes(word)))
-        .map((chunk) => ({
-          item: chunk,
-          score: 1,
-        }));
-    }
-
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'No relevant content found' });
-    }
-
-    const contextChunks = results.slice(0, 3).map((r) => {
-      const fileName = r.item.fileName || 'Document';
-      const snippet = r.item.content.substring(0, 500).trim();
-      return `${fileName}: ${snippet}...`;
-    });
-
-    const finalContext = contextChunks.join('\n\n');
-    res.json({ context: finalContext });
-  } catch (error) {
-    console.error('Fetch context error:', error);
-    res.status(500).json({ error: 'Server error' });
+    const context = results.map(doc => `${doc.title}: ${doc.snippet.trim()}...`).join('\n\n');
+    res.json({ context });
+  } catch (err) {
+    console.error('Vector search error:', err.message);
+    res.status(500).json({ error: 'Vector search failed' });
   }
 });
 
