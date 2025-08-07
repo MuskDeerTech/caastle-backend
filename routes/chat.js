@@ -7,10 +7,11 @@ const cheerio = require('cheerio');
 const multer = require('multer');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
-const fs = require('fs');
-const path = require('path');
-const Fuse = require('fuse.js');
 const Document = require('../models/Document');
+
+// Use memory storage for Vercel
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
 router.post('/save-log', async (req, res) => {
   const { name, email, phone, log } = req.body;
@@ -142,18 +143,12 @@ router.post('/fetch-website', async (req, res) => {
   }
 });
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
-});
-const upload = multer({ storage });
-
 router.post('/upload-document', upload.single('file'), async (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
   console.log('Received file:', file.originalname, file.mimetype);
-  const { originalname, path: filePath, mimetype } = file;
+  const { originalname, buffer, mimetype } = file; // Use buffer instead of filePath
   let content = '';
   let fileType = '';
 
@@ -161,14 +156,13 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
     const ext = originalname.split('.').pop().toLowerCase();
     if (mimetype === 'application/pdf' || ext === 'pdf') {
       fileType = 'pdf';
-      const dataBuffer = fs.readFileSync(filePath);
-      const pdfData = await pdfParse(dataBuffer);
+      const pdfData = await pdfParse(buffer); // Parse from buffer
       content = pdfData.text;
     } else if (['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword', 'application/octet-stream'].includes(mimetype) || ext === 'docx' || ext === 'doc') {
       fileType = 'docx';
-      console.log('Processing DOCX:', filePath);
+      console.log('Processing DOCX:', originalname);
       try {
-        const result = await mammoth.extractRawText({ path: filePath });
+        const result = await mammoth.extractRawText({ buffer }); // Use buffer for mammoth
         content = result.value || '';
         if (!content) throw new Error('Mammoth extracted no text');
       } catch (mammothErr) {
@@ -177,9 +171,8 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
       }
     } else if (mimetype === 'text/plain' || ext === 'txt') {
       fileType = 'txt';
-      content = fs.readFileSync(filePath, 'utf8');
+      content = buffer.toString('utf8'); // Convert buffer to string
     } else {
-      fs.unlinkSync(filePath);
       return res.status(400).json({ error: 'Unsupported file type. Use PDF, DOCX, or TXT.' });
     }
 
@@ -191,30 +184,25 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
       fileType,
     });
     await newDoc.save();
+    console.log('Document saved to MongoDB:', newDoc.title);
 
-    fs.unlinkSync(filePath);
     res.status(200).json({ message: 'Document uploaded and stored', title: originalname });
   } catch (err) {
-    fs.unlinkSync(filePath);
     console.error('Upload error:', err.message, err.stack);
     res.status(500).json({ error: `Failed to process document: ${err.message}` });
   }
 });
 
-router.post("/fetch-context", async (req, res) => {
+router.post('/fetch-context', async (req, res) => {
   const { query } = req.body;
-
   if (!query) {
-    return res.status(400).json({ error: "Query is required" });
+    return res.status(400).json({ error: 'Query is required' });
   }
-
   try {
     const documents = await Document.find();
     const contentMap = {};
-
-    // ✅ Use correct key: doc.title instead of doc.fileName
     documents.forEach((doc) => {
-      if (doc.content && typeof doc.content === "string") {
+      if (doc.content && typeof doc.content === 'string') {
         contentMap[doc.title] = doc.content;
       }
     });
@@ -224,9 +212,8 @@ router.post("/fetch-context", async (req, res) => {
       content: content.toLowerCase(),
     }));
 
-    // ✅ Fuse.js setup
     const fuse = new Fuse(allChunks, {
-      keys: ["content"],
+      keys: ['content'],
       threshold: 0.5,
       minMatchCharLength: 2,
       ignoreLocation: true,
@@ -234,14 +221,10 @@ router.post("/fetch-context", async (req, res) => {
     });
 
     let results = fuse.search(query.toLowerCase());
-
-    // 🔁 If no fuzzy matches, fallback to keyword match
     if (results.length === 0) {
       const keywords = query.toLowerCase().split(/\s+/);
       results = allChunks
-        .filter((chunk) =>
-          keywords.some((word) => chunk.content.includes(word))
-        )
+        .filter((chunk) => keywords.some((word) => chunk.content.includes(word)))
         .map((chunk) => ({
           item: chunk,
           score: 1,
@@ -249,23 +232,21 @@ router.post("/fetch-context", async (req, res) => {
     }
 
     if (results.length === 0) {
-      return res.status(404).json({ error: "No relevant content found" });
+      return res.status(404).json({ error: 'No relevant content found' });
     }
 
-    // 🧠 Prepare top 3 matched context
     const contextChunks = results.slice(0, 3).map((r) => {
-      const fileName = r.item.fileName || "Document";
+      const fileName = r.item.fileName || 'Document';
       const snippet = r.item.content.substring(0, 500).trim();
       return `${fileName}: ${snippet}...`;
     });
 
-    const finalContext = contextChunks.join("\n\n");
-    return res.json({ context: finalContext });
+    const finalContext = contextChunks.join('\n\n');
+    res.json({ context: finalContext });
   } catch (error) {
-    console.error("Fetch context error:", error);
-    return res.status(500).json({ error: "Server error" });
+    console.error('Fetch context error:', error);
+    res.status(500).json({ error: 'Server error' });
   }
 });
-
 
 module.exports = router;
