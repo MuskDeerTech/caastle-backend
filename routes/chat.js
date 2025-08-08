@@ -10,6 +10,9 @@ const mammoth = require('mammoth');
 const Document = require('../models/Document');
 const { getEmbedding } = require('../utils/embedding'); // Import embedding utility
 const Fuse = require('fuse.js'); // Add Fuse import
+const cosineSimilarity = require('compute-cosine-similarity');
+const faqs = require('../faqs'); // Import FAQs
+const companyData = require('../data/companyData'); // Import company data
 
 // Use memory storage for Vercel
 const storage = multer.memoryStorage();
@@ -197,75 +200,47 @@ router.post('/upload-document', upload.single('file'), async (req, res) => {
   }
 });
 
-router.post('/fetch-context', async (req, res) => {
+
+// fetch-context.js
+
+router.post("/fetch-context", async (req, res) => {
   const { query } = req.body;
-  if (!query) return res.status(400).json({ error: 'Query is required' });
+  const queryEmbedding = await getEmbedding(query);
 
-  try {
-    const queryEmbedding = await getEmbedding(query);
+  // 1. From uploaded docs
+  const documents = await Document.find({}, { title: 1, content: 1, embedding: 1 });
+  const scoredDocs = documents.map(doc => ({
+    title: doc.title,
+    content: doc.content,
+    score: cosineSimilarity(queryEmbedding, doc.embedding)
+  }));
 
-    const results = await Document.aggregate([
-      {
-        $vectorSearch: {
-          index: 'vector_index', // Ensure this index exists in MongoDB
-          path: 'embedding',
-          queryVector: queryEmbedding,
-          numCandidates: 10,
-          limit: 3,
-        },
-      },
-      {
-        $project: {
-          title: 1,
-          snippet: { $substr: ['$content', 0, 500] },
-        },
-      },
-    ]);
+  // 2. From FAQ
+  faqs.forEach(f => {
+    scoredDocs.push({
+      title: f.question,
+      content: f.answer,
+      score: query.toLowerCase().includes(f.question.toLowerCase()) ? 1 : 0
+    });
+  });
 
-    if (!results.length) {
-      // Fallback to Fuse.js search if vector search fails
-      const documents = await Document.find();
-      const contentMap = {};
-      documents.forEach((doc) => {
-        if (doc.content && typeof doc.content === 'string') {
-          contentMap[doc.title] = doc.content;
-        }
+  // 3. From companyData
+  Object.entries(companyData.productSpecs).forEach(([name, specs]) => {
+    if (specs.suitableFor) {
+      scoredDocs.push({
+        title: name,
+        content: JSON.stringify(specs),
+        score: specs.suitableFor.some(s => query.toLowerCase().includes(s.toLowerCase())) ? 1 : 0
       });
-
-      const allChunks = Object.entries(contentMap).map(([title, content]) => ({
-        fileName: title,
-        content: content.toLowerCase(),
-      }));
-
-      const fuse = new Fuse(allChunks, {
-        keys: ['content'],
-        threshold: 0.5,
-        minMatchCharLength: 2,
-        ignoreLocation: true,
-        includeScore: true,
-      });
-
-      const fuseResults = fuse.search(query.toLowerCase());
-      if (fuseResults.length === 0) {
-        return res.status(404).json({ error: 'No relevant content found' });
-      }
-
-      const contextChunks = fuseResults.slice(0, 3).map((r) => {
-        const fileName = r.item.fileName || 'Document';
-        const snippet = r.item.content.substring(0, 500).trim();
-        return `${fileName}: ${snippet}...`;
-      });
-
-      const finalContext = contextChunks.join('\n\n');
-      return res.json({ context: finalContext });
     }
+  });
 
-    const context = results.map(doc => `${doc.title}: ${doc.snippet.trim()}...`).join('\n\n');
-    res.json({ context });
-  } catch (err) {
-    console.error('Fetch context error:', err.message);
-    res.status(500).json({ error: 'Fetch context failed' });
-  }
+  scoredDocs.sort((a, b) => b.score - a.score);
+  const topMatches = scoredDocs.slice(0, 3);
+  const context = topMatches.map(m => `${m.title}: ${m.content}`).join("\n\n");
+
+  res.json({ context });
 });
+
 
 module.exports = router;
