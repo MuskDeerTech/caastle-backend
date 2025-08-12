@@ -1,3 +1,5 @@
+// D:\chatbox\backend\routes\chat.js
+
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
@@ -8,8 +10,8 @@ const multer = require("multer");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 const Document = require("../models/Document");
-const { getEmbedding } = require("../utils/embedding"); // Import embedding utility
-const Fuse = require("fuse.js"); // Add Fuse import
+const { getEmbedding } = require("../utils/embedding");
+const Fuse = require("fuse.js");
 const cosineSimilarity = require("compute-cosine-similarity");
 
 // Use memory storage for Vercel
@@ -21,7 +23,7 @@ router.post('/save-log', async (req, res) => {
   try {
     const user = await User.findOneAndUpdate(
       { email },
-      { name, phone, chatHistory: log, lastUpdated: new Date() }, // Ensure 'chatHistory' is correct
+      { name, phone, chatHistory: log, lastUpdated: new Date() },
       { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
     );
     console.log('User saved successfully at 10:50 PM IST, August 09, 2025:', user.email);
@@ -83,76 +85,46 @@ router.post("/send-email", async (req, res) => {
 
 router.post("/fetch-website", async (req, res) => {
   const { query } = req.body;
-  console.log("Fetching website data for query:", query);
   try {
-    const baseUrl = "https://www.tan90thermal.com";
-    const visitedUrls = new Set();
-    const contentMap = {};
-
-    const crawlPage = async (url) => {
-      if (visitedUrls.has(url) || visitedUrls.size > 10) return;
-      visitedUrls.add(url);
+    const urls = [
+      "https://www.tan90thermal.com/products/food",
+      "https://www.tan90thermal.com/cooling-as-a-service",
+      "https://www.tan90thermal.com/products/insulation-bag",
+      "https://www.tan90thermal.com/products/ice-gel-pack",
+      "https://www.tan90thermal.com/products/blowmolded-ice-box",
+      "https://www.tan90thermal.com/products/last-mile-delivery-bag",
+      "https://www.tan90thermal.com/products/shipper-box",
+      "https://www.tan90thermal.com/products/rotomolded-icebox",
+      "https://www.tan90thermal.com/blast-freezer-series",
+      "https://www.tan90thermal.com/products/thermal-panel",
+    ];
+    let content = "";
+    for (const url of urls) {
       try {
         const response = await axios.get(url, {
           timeout: 10000,
           headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           },
         });
         const $ = cheerio.load(response.data);
-        console.log("Crawling:", url);
-        const pageTitle = $("title").text() || "No title";
-        const pageContent = $("body").text().trim();
-        const specs = $("p, li")
-          .map((i, el) => $(el).text())
-          .get()
-          .join("\n");
-        contentMap[
-          url
-        ] = `Title: ${pageTitle}\nContent: ${pageContent}\nSpecs: ${specs.substring(
-          0,
-          2000
-        )}`;
-
-        $('a[href^="/products/"], a[href^="/technology/"]').each((i, elem) => {
-          let href = $(elem).attr("href");
-          if (href.startsWith("/")) href = baseUrl + href;
-          if (href.startsWith(baseUrl) && !visitedUrls.has(href)) {
-            crawlPage(href).catch((err) =>
-              console.error(`Failed to crawl ${href}:`, err.message)
-            );
-          }
-        });
+        const pageContent = $('h1, h2, h3, p, li, div').map((i, el) => $(el).text().trim()).get().filter(text => text.length > 20).join("\n");
+        content += `URL: ${url}\n${pageContent}\n\n`;
       } catch (err) {
-        console.error(`Error crawling ${url}:`, err.message, err.code);
+        console.error(`Failed to scrape ${url}:`, err.message);
       }
-    };
-
-    await crawlPage(baseUrl + "/products/all-products");
-    console.log("Crawled content map:", contentMap);
-
-    let relevantContent = "";
-    const siteFuse = new Fuse(Object.entries(contentMap), {
-      keys: [1],
-      threshold: 0.4,
-    });
-    const matches = siteFuse.search(query);
-    matches.forEach((match) => {
-      const [url, content] = match.item;
-      relevantContent += `${url}: ${content}\n`;
-    });
-
-    if (!relevantContent) {
-      return res.status(404).json({ error: "No relevant content found" });
     }
 
-    res.json({ content: relevantContent });
+    // Use Fuse on scraped content
+    const siteFuse = new Fuse(content.split("\n\n"), { keys: [''], threshold: 0.3 });
+    const matches = siteFuse.search(query).map(match => match.item).join("\n");
+
+    if (!matches) return res.status(404).json({ error: "No relevant content" });
+
+    res.json({ content: matches });
   } catch (err) {
     console.error("Scraping error:", err.message, err.stack);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch website data", details: err.message });
+    res.status(500).json({ error: "Scrape failed", details: err.message });
   }
 });
 
@@ -201,12 +173,12 @@ router.post("/upload-document", upload.single("file"), async (req, res) => {
 
     if (!content) throw new Error("No content extracted from file");
 
-    const embedding = await getEmbedding(content); // Generate embedding
+    const embedding = await getEmbedding(content);
     const newDoc = new Document({
       title: originalname,
       content,
       fileType,
-      embedding, // Store embedding
+      embedding,
     });
     await newDoc.save();
     console.log("Document saved to MongoDB:", newDoc.title);
@@ -227,17 +199,14 @@ router.post('/fetch-context', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'Query is required' });
 
   try {
-    // 1️⃣ Generate query embedding
     const queryEmbedding = await getEmbedding(query);
-
-    // 2️⃣ Use Atlas Vector Search with enhanced configuration
     let results = await Document.aggregate([
       {
         $vectorSearch: {
           index: 'vectors_index',
           path: 'embedding',
           queryVector: queryEmbedding,
-          numCandidates: 300, // Increase for better precision
+          numCandidates: 300,
           limit: 3,
           filter: {},
         }
@@ -245,7 +214,7 @@ router.post('/fetch-context', async (req, res) => {
       {
         $project: {
           title: 1,
-          content: 1, // Return full content instead of snippet
+          content: 1,
           score: { $meta: 'vectorSearchScore' }
         }
       }
